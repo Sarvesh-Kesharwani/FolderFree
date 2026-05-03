@@ -1,0 +1,23 @@
+# Build outputs
+dist/
+bin/
+obj/
+*.pdb
+
+# Local executable copy. The published one-file app lives in Release/FolderFree.exe.
+/FolderFree.exe
+
+# Temporary screenshots and local verification captures
+Release/*.png
+assets/*screenshot*.png
+
+# Visual Studio / Windows local files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS clutter
+Thumbs.db
+Desktop.ini
