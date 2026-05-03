@@ -35,6 +35,11 @@ For stubborn locks, click **Run as administrator** inside the app and scan again
 
 FolderFree uses the Windows Restart Manager API to ask Windows which processes are using files inside the selected folder.
 
+It also checks common cases that Windows Restart Manager can miss:
+
+- File Explorer windows opened inside the selected folder
+- processes whose current working folder is inside the selected folder
+
 It then shows those apps in a clean table with:
 
 - app name

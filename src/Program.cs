@@ -32,6 +32,13 @@ namespace FolderFree
                 return;
             }
 
+            if (args.Length > 1 && string.Equals(args[0], "--hold-cwd", StringComparison.OrdinalIgnoreCase))
+            {
+                Directory.SetCurrentDirectory(args[1]);
+                Thread.Sleep(15000);
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new MainForm());
@@ -57,6 +64,7 @@ namespace FolderFree
         private readonly CheckBox forceCheckBox = new CheckBox();
         private readonly Label statusLabel = new Label();
         private readonly Label adminLabel = new Label();
+        private readonly ListBox selectedFoldersList = new ListBox();
         private readonly DataGridView grid = new DataGridView();
         private readonly TextBox logBox = new TextBox();
         private readonly List<LockingApp> currentApps = new List<LockingApp>();
@@ -86,11 +94,12 @@ namespace FolderFree
                 Dock = DockStyle.Fill,
                 BackColor = Theme.Page,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
                 Padding = new Padding(24),
             };
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 116));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 68));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 32));
             Controls.Add(shell);
@@ -203,8 +212,11 @@ namespace FolderFree
             controlPanel.Controls.Add(statusLabel, 1, 1);
             controlPanel.SetColumnSpan(statusLabel, 3);
 
+            ConfigureSelectedFolders();
+            shell.Controls.Add(CreateSelectedFolderPanel(), 0, 2);
+
             ConfigureGrid();
-            shell.Controls.Add(grid, 0, 2);
+            shell.Controls.Add(grid, 0, 3);
 
             logBox.Dock = DockStyle.Fill;
             logBox.Multiline = true;
@@ -214,7 +226,7 @@ namespace FolderFree
             logBox.BackColor = Color.White;
             logBox.ForeColor = Theme.Text;
             logBox.Font = new Font("Cascadia Mono", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            shell.Controls.Add(logBox, 0, 3);
+            shell.Controls.Add(logBox, 0, 4);
         }
 
         private void ArrangeHeaderControls()
@@ -258,6 +270,51 @@ namespace FolderFree
             grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Status", HeaderText = "Status", FillWeight = 30 });
         }
 
+        private Control CreateSelectedFolderPanel()
+        {
+            var panel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.Page,
+                ColumnCount = 1,
+                RowCount = 2,
+                Padding = new Padding(0, 2, 0, 8)
+            };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            var label = new Label
+            {
+                Text = "Selected folders",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold, GraphicsUnit.Point),
+                ForeColor = Theme.Muted,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            panel.Controls.Add(label, 0, 0);
+            panel.Controls.Add(selectedFoldersList, 0, 1);
+            return panel;
+        }
+
+        private void ConfigureSelectedFolders()
+        {
+            selectedFoldersList.Dock = DockStyle.Fill;
+            selectedFoldersList.BorderStyle = BorderStyle.FixedSingle;
+            selectedFoldersList.BackColor = Color.White;
+            selectedFoldersList.ForeColor = Theme.Text;
+            selectedFoldersList.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            selectedFoldersList.HorizontalScrollbar = true;
+            selectedFoldersList.IntegralHeight = false;
+            selectedFoldersList.SelectedIndexChanged += (s, e) =>
+            {
+                if (selectedFoldersList.SelectedItem != null)
+                {
+                    folderTextBox.Text = selectedFoldersList.SelectedItem.ToString();
+                }
+            };
+        }
+
         private void UpdateAdminState()
         {
             bool admin = IsAdministrator();
@@ -278,21 +335,28 @@ namespace FolderFree
 
         private void SelectFolder()
         {
-            using (var dialog = new FolderBrowserDialog())
+            string selected = ModernFolderPicker.Show(this.Handle, Directory.Exists(folderTextBox.Text) ? folderTextBox.Text : null);
+            if (!string.IsNullOrWhiteSpace(selected))
             {
-                dialog.Description = "Select a folder to free";
-                dialog.ShowNewFolderButton = false;
-                if (Directory.Exists(folderTextBox.Text))
-                {
-                    dialog.SelectedPath = folderTextBox.Text;
-                }
+                logBox.Clear();
+                folderTextBox.Text = selected;
+                AddSelectedFolder(selected);
+                _ = ScanAsync();
+            }
+        }
 
-                if (dialog.ShowDialog(this) == DialogResult.OK)
+        private void AddSelectedFolder(string folder)
+        {
+            for (int i = selectedFoldersList.Items.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(selectedFoldersList.Items[i].ToString(), folder, StringComparison.OrdinalIgnoreCase))
                 {
-                    folderTextBox.Text = dialog.SelectedPath;
-                    _ = ScanAsync();
+                    selectedFoldersList.Items.RemoveAt(i);
                 }
             }
+
+            selectedFoldersList.Items.Insert(0, folder);
+            selectedFoldersList.SelectedIndex = 0;
         }
 
         private async Task ScanAsync()
@@ -307,6 +371,7 @@ namespace FolderFree
             SetBusy(true, "Scanning folder locks...");
             grid.Rows.Clear();
             currentApps.Clear();
+            AddSelectedFolder(folder);
             Log("Scanning: " + folder);
 
             try
@@ -338,7 +403,7 @@ namespace FolderFree
             grid.Rows.Clear();
             foreach (var app in currentApps.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
             {
-                int rowIndex = grid.Rows.Add(true, app.Name, app.Pid, app.LockCount, app.DisplayPath, "Holding");
+                int rowIndex = grid.Rows.Add(true, app.Name, app.Pid, app.LockCount, app.DisplayPath, app.ReasonSummary);
                 grid.Rows[rowIndex].Tag = app;
             }
         }
@@ -540,6 +605,137 @@ namespace FolderFree
         }
     }
 
+    internal static class ModernFolderPicker
+    {
+        private const uint FOS_NOCHANGEDIR = 0x00000008;
+        private const uint FOS_PICKFOLDERS = 0x00000020;
+        private const uint FOS_FORCEFILESYSTEM = 0x00000040;
+        private const uint FOS_PATHMUSTEXIST = 0x00000800;
+        private const uint SIGDN_FILESYSPATH = 0x80058000;
+        private const int ERROR_CANCELLED = unchecked((int)0x800704C7);
+
+        public static string Show(IntPtr owner, string initialFolder)
+        {
+            try
+            {
+                var dialog = (IFileOpenDialog)new FileOpenDialog();
+                uint options;
+                dialog.GetOptions(out options);
+                dialog.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR);
+                dialog.SetTitle("Select a folder to free");
+                dialog.SetOkButtonLabel("Select folder");
+
+                if (!string.IsNullOrWhiteSpace(initialFolder) && Directory.Exists(initialFolder))
+                {
+                    IShellItem item;
+                    int itemResult = SHCreateItemFromParsingName(initialFolder, IntPtr.Zero, typeof(IShellItem).GUID, out item);
+                    if (itemResult == 0)
+                    {
+                        dialog.SetFolder(item);
+                    }
+                }
+
+                int result = dialog.Show(owner);
+                if (result == ERROR_CANCELLED) return null;
+                if (result != 0) Marshal.ThrowExceptionForHR(result);
+
+                IShellItem selected;
+                dialog.GetResult(out selected);
+                IntPtr pathPointer;
+                selected.GetDisplayName(SIGDN_FILESYSPATH, out pathPointer);
+                try
+                {
+                    return Marshal.PtrToStringUni(pathPointer);
+                }
+                finally
+                {
+                    if (pathPointer != IntPtr.Zero)
+                    {
+                        Marshal.FreeCoTaskMem(pathPointer);
+                    }
+                }
+            }
+            catch
+            {
+                return ShowFallback(initialFolder);
+            }
+        }
+
+        private static string ShowFallback(string initialFolder)
+        {
+            using (var dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Select a folder to free";
+                dialog.ShowNewFolderButton = false;
+                if (!string.IsNullOrWhiteSpace(initialFolder) && Directory.Exists(initialFolder))
+                {
+                    dialog.SelectedPath = initialFolder;
+                }
+
+                return dialog.ShowDialog() == DialogResult.OK ? dialog.SelectedPath : null;
+            }
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+        private static extern int SHCreateItemFromParsingName(
+            [MarshalAs(UnmanagedType.LPWStr)] string pszPath,
+            IntPtr pbc,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+            out IShellItem ppv);
+
+        [ComImport]
+        [Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
+        private class FileOpenDialog
+        {
+        }
+
+        [ComImport]
+        [Guid("42f85136-db7e-439c-85f1-e4075d135fc8")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IFileOpenDialog
+        {
+            [PreserveSig]
+            int Show(IntPtr parent);
+            void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+            void SetFileTypeIndex(uint iFileType);
+            void GetFileTypeIndex(out uint piFileType);
+            void Advise(IntPtr pfde, out uint pdwCookie);
+            void Unadvise(uint dwCookie);
+            void SetOptions(uint fos);
+            void GetOptions(out uint pfos);
+            void SetDefaultFolder(IShellItem psi);
+            void SetFolder(IShellItem psi);
+            void GetFolder(out IShellItem ppsi);
+            void GetCurrentSelection(out IShellItem ppsi);
+            void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+            void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);
+            void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+            void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+            void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+            void GetResult(out IShellItem ppsi);
+            void AddPlace(IShellItem psi, int fdap);
+            void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);
+            void Close(int hr);
+            void SetClientGuid(ref Guid guid);
+            void ClearClientData();
+            void SetFilter(IntPtr pFilter);
+            void GetResults(out IntPtr ppenum);
+            void GetSelectedItems(out IntPtr ppsai);
+        }
+
+        [ComImport]
+        [Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellItem
+        {
+            void BindToHandler(IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid bhid, [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IntPtr ppv);
+            void GetParent(out IShellItem ppsi);
+            void GetDisplayName(uint sigdnName, out IntPtr ppszName);
+            void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);
+            void Compare(IShellItem psi, uint hint, out int piOrder);
+        }
+    }
+
     internal sealed class LockingApp
     {
         public int Pid { get; set; }
@@ -547,10 +743,20 @@ namespace FolderFree
         public string ExecutablePath { get; set; }
         public int LockCount { get; set; }
         public List<string> Samples { get; private set; }
+        public List<string> Reasons { get; private set; }
 
         public LockingApp()
         {
             Samples = new List<string>();
+            Reasons = new List<string>();
+        }
+
+        public string ReasonSummary
+        {
+            get
+            {
+                return Reasons.Count == 0 ? "Holding" : string.Join(", ", Reasons.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            }
         }
 
         public string DisplayPath
@@ -560,6 +766,14 @@ namespace FolderFree
                 if (!string.IsNullOrEmpty(ExecutablePath)) return ExecutablePath;
                 if (Samples.Count > 0) return Samples[0];
                 return "";
+            }
+        }
+
+        public void AddReason(string reason)
+        {
+            if (!string.IsNullOrWhiteSpace(reason) && !Reasons.Contains(reason, StringComparer.OrdinalIgnoreCase))
+            {
+                Reasons.Add(reason);
             }
         }
     }
@@ -585,6 +799,7 @@ namespace FolderFree
                     if (!found.TryGetValue(process.Pid, out app))
                     {
                         app = process;
+                        app.AddReason("File handle");
                         found.Add(app.Pid, app);
                     }
 
@@ -599,6 +814,18 @@ namespace FolderFree
                 }
             }
 
+            if (progress != null) progress.Report("Checking Explorer windows...");
+            foreach (var app in ExplorerFolderScanner.Find(folder))
+            {
+                Merge(found, app);
+            }
+
+            if (progress != null) progress.Report("Checking process working folders...");
+            foreach (var app in CurrentDirectoryScanner.Find(folder))
+            {
+                Merge(found, app);
+            }
+
             if (progress != null) progress.Report("Resolving process names...");
             foreach (var app in found.Values)
             {
@@ -609,6 +836,32 @@ namespace FolderFree
                 .Where(app => app.Pid != Process.GetCurrentProcess().Id)
                 .OrderBy(app => app.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static void Merge(Dictionary<int, LockingApp> found, LockingApp detected)
+        {
+            if (detected == null || detected.Pid <= 0) return;
+
+            LockingApp app;
+            if (!found.TryGetValue(detected.Pid, out app))
+            {
+                found.Add(detected.Pid, detected);
+                return;
+            }
+
+            app.LockCount += Math.Max(1, detected.LockCount);
+            foreach (var sample in detected.Samples)
+            {
+                if (app.Samples.Count < 5 && !app.Samples.Contains(sample, StringComparer.OrdinalIgnoreCase))
+                {
+                    app.Samples.Add(sample);
+                }
+            }
+
+            foreach (var reason in detected.Reasons)
+            {
+                app.AddReason(reason);
+            }
         }
 
         private static List<string> CollectResources(string folder, IProgress<string> progress)
@@ -667,6 +920,236 @@ namespace FolderFree
             {
                 if (string.IsNullOrWhiteSpace(app.Name)) app.Name = "Process";
             }
+        }
+    }
+
+    internal static class ExplorerFolderScanner
+    {
+        public static IEnumerable<LockingApp> Find(string folder)
+        {
+            object shell = null;
+            object windows = null;
+
+            try
+            {
+                Type shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null) yield break;
+
+                shell = Activator.CreateInstance(shellType);
+                windows = shellType.InvokeMember("Windows", System.Reflection.BindingFlags.InvokeMethod, null, shell, null);
+                if (windows == null) yield break;
+
+                int count = Convert.ToInt32(windows.GetType().InvokeMember("Count", System.Reflection.BindingFlags.GetProperty, null, windows, null));
+                for (int i = 0; i < count; i++)
+                {
+                    object window = null;
+                    try
+                    {
+                        window = windows.GetType().InvokeMember("Item", System.Reflection.BindingFlags.InvokeMethod, null, windows, new object[] { i });
+                        if (window == null) continue;
+
+                        object locationUrl = window.GetType().InvokeMember("LocationURL", System.Reflection.BindingFlags.GetProperty, null, window, null);
+                        string path = UrlToPath(Convert.ToString(locationUrl));
+                        if (!PathTools.IsSameOrInside(path, folder)) continue;
+
+                        object hwndValue = window.GetType().InvokeMember("HWND", System.Reflection.BindingFlags.GetProperty, null, window, null);
+                        int pid;
+                        GetWindowThreadProcessId(new IntPtr(Convert.ToInt64(hwndValue)), out pid);
+                        if (pid <= 0) continue;
+
+                        yield return new LockingApp
+                        {
+                            Pid = pid,
+                            Name = "explorer",
+                            LockCount = 1,
+                            Samples = { path },
+                            Reasons = { "Explorer window" }
+                        };
+                    }
+                    finally
+                    {
+                        if (window != null && Marshal.IsComObject(window)) Marshal.ReleaseComObject(window);
+                    }
+                }
+            }
+            finally
+            {
+                if (windows != null && Marshal.IsComObject(windows)) Marshal.ReleaseComObject(windows);
+                if (shell != null && Marshal.IsComObject(shell)) Marshal.ReleaseComObject(shell);
+            }
+        }
+
+        private static string UrlToPath(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return "";
+            try
+            {
+                return new Uri(url).LocalPath;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
+    }
+
+    internal static class CurrentDirectoryScanner
+    {
+        private const int ProcessBasicInformation = 0;
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        private const uint PROCESS_VM_READ = 0x0010;
+
+        public static IEnumerable<LockingApp> Find(string folder)
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    if (process.Id == Process.GetCurrentProcess().Id) continue;
+
+                    string currentDirectory = TryGetCurrentDirectory(process.Id);
+                    if (!PathTools.IsSameOrInside(currentDirectory, folder)) continue;
+
+                    yield return new LockingApp
+                    {
+                        Pid = process.Id,
+                        Name = process.ProcessName,
+                        LockCount = 1,
+                        Samples = { currentDirectory },
+                        Reasons = { "Working folder" }
+                    };
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+
+        private static string TryGetCurrentDirectory(int pid)
+        {
+            IntPtr processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, false, pid);
+            if (processHandle == IntPtr.Zero) return "";
+
+            try
+            {
+                bool wow64;
+                if (IsWow64Process(processHandle, out wow64) && wow64)
+                {
+                    return "";
+                }
+
+                PROCESS_BASIC_INFORMATION basicInfo;
+                int returnLength;
+                int status = NtQueryInformationProcess(processHandle, ProcessBasicInformation, out basicInfo, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out returnLength);
+                if (status != 0 || basicInfo.PebBaseAddress == IntPtr.Zero) return "";
+
+                IntPtr processParametersAddress = ReadIntPtr(processHandle, IntPtr.Add(basicInfo.PebBaseAddress, 0x20));
+                if (processParametersAddress == IntPtr.Zero) return "";
+
+                return ReadUnicodeString(processHandle, IntPtr.Add(processParametersAddress, 0x38));
+            }
+            catch
+            {
+                return "";
+            }
+            finally
+            {
+                CloseHandle(processHandle);
+            }
+        }
+
+        private static IntPtr ReadIntPtr(IntPtr processHandle, IntPtr address)
+        {
+            byte[] buffer = new byte[IntPtr.Size];
+            IntPtr bytesRead;
+            if (!ReadProcessMemory(processHandle, address, buffer, buffer.Length, out bytesRead) || bytesRead.ToInt64() != buffer.Length)
+            {
+                return IntPtr.Zero;
+            }
+
+            return IntPtr.Size == 8
+                ? new IntPtr(BitConverter.ToInt64(buffer, 0))
+                : new IntPtr(BitConverter.ToInt32(buffer, 0));
+        }
+
+        private static string ReadUnicodeString(IntPtr processHandle, IntPtr address)
+        {
+            byte[] header = new byte[16];
+            IntPtr bytesRead;
+            if (!ReadProcessMemory(processHandle, address, header, header.Length, out bytesRead))
+            {
+                return "";
+            }
+
+            ushort length = BitConverter.ToUInt16(header, 0);
+            if (length == 0 || length > 32766) return "";
+
+            long bufferAddress = BitConverter.ToInt64(header, 8);
+            if (bufferAddress == 0) return "";
+
+            byte[] pathBytes = new byte[length];
+            if (!ReadProcessMemory(processHandle, new IntPtr(bufferAddress), pathBytes, pathBytes.Length, out bytesRead))
+            {
+                return "";
+            }
+
+            return Encoding.Unicode.GetString(pathBytes).TrimEnd('\0');
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, int processId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsWow64Process(IntPtr hProcess, out bool wow64Process);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr processHandle, int processInformationClass, out PROCESS_BASIC_INFORMATION processInformation, int processInformationLength, out int returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_BASIC_INFORMATION
+        {
+            public IntPtr Reserved1;
+            public IntPtr PebBaseAddress;
+            public IntPtr Reserved2_0;
+            public IntPtr Reserved2_1;
+            public IntPtr UniqueProcessId;
+            public IntPtr Reserved3;
+        }
+    }
+
+    internal static class PathTools
+    {
+        public static bool IsSameOrInside(string path, string folder)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(folder)) return false;
+
+            try
+            {
+                string normalizedPath = Normalize(path);
+                string normalizedFolder = Normalize(folder);
+                return string.Equals(normalizedPath, normalizedFolder, StringComparison.OrdinalIgnoreCase)
+                    || normalizedPath.StartsWith(normalizedFolder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string Normalize(string path)
+        {
+            string fullPath = Path.GetFullPath(path.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
     }
 
@@ -892,7 +1375,28 @@ namespace FolderFree
                         child.WaitForExit(3000);
                     }
 
-                    return detected ? 0 : 2;
+                    if (!detected) return 2;
+                }
+
+                var cwdInfo = new ProcessStartInfo(Application.ExecutablePath, "--hold-cwd \"" + temp + "\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = temp
+                };
+
+                using (var child = Process.Start(cwdInfo))
+                {
+                    Thread.Sleep(1000);
+                    var results = FolderScanner.Scan(temp, null);
+                    bool detected = child != null && results.Any(r => r.Pid == child.Id && r.Reasons.Contains("Working folder", StringComparer.OrdinalIgnoreCase));
+                    if (child != null && !child.HasExited)
+                    {
+                        child.Kill();
+                        child.WaitForExit(3000);
+                    }
+
+                    return detected ? 0 : 4;
                 }
             }
             catch
